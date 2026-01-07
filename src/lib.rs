@@ -13,7 +13,6 @@
     clippy::if_let_mutex,
     unexpected_cfgs,
     clippy::await_holding_lock,
-    clippy::match_on_vec_items,
     clippy::imprecise_flops,
     clippy::suboptimal_flops,
     clippy::lossy_float_literal,
@@ -116,7 +115,7 @@ impl<'de> Deserialize<'de> for JsonRpcRequest {
             Ok(Self {
                 id: helper.id,
                 method: helper.method,
-                params: helper.params.unwrap_or(Value::Null),
+                params: helper.params.unwrap_or(Value::default()),
             })
         } else {
             Err(D::Error::custom("Unknown jsonrpc version"))
@@ -155,20 +154,7 @@ impl JsonRpcExtractor {
 
     pub fn parse_params<T: DeserializeOwned>(self) -> Result<T, JsonRpcResponse> {
         cfg_if::cfg_if! {
-           if #[cfg(feature = "simd")] {
-                match simd_json::serde::from_owned_value(self.parsed){
-                    Ok(v) => Ok(v),
-                    Err(e) => {
-                        let error = JsonRpcError::new(
-                            JsonRpcErrorReason::InvalidParams,
-                            e.to_string(),
-                            Value::default(),
-                        );
-                        Err(JsonRpcResponse::error(self.id, error))
-                    }
-
-                }
-            } else if #[cfg(feature = "serde_json")] {
+            if #[cfg(feature = "serde_json")] {
                 match serde_json::from_value(self.parsed){
                     Ok(v) => Ok(v),
                     Err(e) => {
@@ -176,6 +162,18 @@ impl JsonRpcExtractor {
                             JsonRpcErrorReason::InvalidParams,
                             e.to_string(),
                             Value::Null,
+                        );
+                        Err(JsonRpcResponse::error(self.id, error))
+                    }
+                }
+            } else if #[cfg(feature = "simd")] {
+                match simd_json::serde::from_owned_value(self.parsed){
+                    Ok(v) => Ok(v),
+                    Err(e) => {
+                        let error = JsonRpcError::new(
+                            JsonRpcErrorReason::InvalidParams,
+                            e.to_string(),
+                            Value::default(),
                         );
                         Err(JsonRpcResponse::error(self.id, error))
                     }
@@ -234,8 +232,8 @@ where
         };
 
         cfg_if!(
-            if #[cfg(feature = "simd")] {
-               let parsed: JsonRpcRequest = match simd_json::from_slice(&mut bytes){
+            if #[cfg(feature = "serde_json")] {
+               let parsed: JsonRpcRequest = match serde_json::from_slice(&bytes){
                     Ok(a) => a,
                     Err(e) => {
                         return Err(JsonRpcResponse {
@@ -248,8 +246,8 @@ where
                         })
                     }
                 };
-            } else if #[cfg(feature = "serde_json")] {
-               let parsed: JsonRpcRequest = match serde_json::from_slice(&bytes){
+            } else if #[cfg(feature = "simd")] {
+               let parsed: JsonRpcRequest = match simd_json::from_slice(&mut bytes){
                     Ok(a) => a,
                     Err(e) => {
                         return Err(JsonRpcResponse {
@@ -293,7 +291,7 @@ fn json_content_type(headers: &HeaderMap) -> bool {
     };
 
     let is_json_content_type = mime.type_() == "application"
-        && (mime.subtype() == "json" || mime.suffix().map_or(false, |name| name == "json"));
+        && (mime.subtype() == "json" || mime.suffix().is_some_and(|name| name == "json"));
 
     is_json_content_type
 }
@@ -326,19 +324,7 @@ impl JsonRpcResponse {
         Id: From<ID>,
     {
         cfg_if::cfg_if! {
-          if #[cfg(feature = "simd")] {
-            match simd_json::serde::to_owned_value(result) {
-                Ok(v) => JsonRpcResponse::new(id, JsonRpcAnswer::Result(v)),
-                Err(e) => {
-                    let err = JsonRpcError::new(
-                        JsonRpcErrorReason::InternalError,
-                        e.to_string(),
-                        Value::default(),
-                    );
-                    JsonRpcResponse::error(id, err)
-                }
-            }
-          } else if #[cfg(feature = "serde_json")] {
+          if #[cfg(feature = "serde_json")] {
             match serde_json::to_value(result) {
                 Ok(v) => JsonRpcResponse::new(id, JsonRpcAnswer::Result(v)),
                 Err(e) => {
@@ -346,6 +332,18 @@ impl JsonRpcResponse {
                         JsonRpcErrorReason::InternalError,
                         e.to_string(),
                         Value::Null,
+                    );
+                    JsonRpcResponse::error(id, err)
+                }
+            }
+          } else if #[cfg(feature = "simd")] {
+            match simd_json::serde::to_owned_value(result) {
+                Ok(v) => JsonRpcResponse::new(id, JsonRpcAnswer::Result(v)),
+                Err(e) => {
+                    let err = JsonRpcError::new(
+                        JsonRpcErrorReason::InternalError,
+                        e.to_string(),
+                        Value::default(),
                     );
                     JsonRpcResponse::error(id, err)
                 }
